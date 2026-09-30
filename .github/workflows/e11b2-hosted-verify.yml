@@ -1,0 +1,49 @@
+name: E11B2 Hosted Verify
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/e11b2-hosted-verify-trigger.json
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SITE_URL: https://marketdirectory.co.uk
+      EXPECTED_BUNDLE: assets/index-BDt0PV_T.js
+      EXPECTED_SOURCE_SHA: 37d7fe8aa5c1eb96ae1957dfd931adf37caf84c0
+    steps:
+      - name: Verify hosted bundle and sitemap
+        shell: bash
+        run: |
+          set -euo pipefail
+          ok=0
+          for attempt in $(seq 1 8); do
+            bust="e11b2=${GITHUB_SHA}-${attempt}-$(date +%s)"
+            index=$(mktemp)
+            info=$(mktemp)
+            sitemap=$(mktemp)
+            index_status=$(curl -L -sS --connect-timeout 10 --max-time 25 -o "$index" -w '%{http_code}' "${SITE_URL}/?${bust}" || true)
+            info_status=$(curl -L -sS --connect-timeout 10 --max-time 25 -o "$info" -w '%{http_code}' "${SITE_URL}/deploy-info.json?${bust}" || true)
+            sitemap_status=$(curl -L -sS --connect-timeout 10 --max-time 25 -o "$sitemap" -w '%{http_code}' "${SITE_URL}/sitemap-markets.xml?${bust}" || true)
+            echo "attempt=$attempt index=$index_status info=$info_status sitemap=$sitemap_status"
+            if [ "$index_status" = 200 ] && [ "$info_status" = 200 ] && [ "$sitemap_status" = 200 ] \
+              && grep -Fq "${EXPECTED_BUNDLE}" "$index" \
+              && grep -Fq "${EXPECTED_SOURCE_SHA}" "$info" \
+              && ! grep -Fq '/market/test-marklet-123<' "$sitemap" \
+              && ! grep -Fq '/market/riverside-farmers-market<' "$sitemap" \
+              && grep -Fq '/market/riverside-market<' "$sitemap"; then
+              ok=1
+              rm -f "$index" "$info" "$sitemap"
+              break
+            fi
+            rm -f "$index" "$info" "$sitemap"
+            sleep 8
+          done
+          test "$ok" = 1
+          echo "Hosted production bundle and sitemap verified"
