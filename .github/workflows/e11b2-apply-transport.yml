@@ -18,10 +18,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      ROLLBACK_SHA: 51067911b1073eb0a162281f2a052375c29502ad
+      ROLLBACK_SHA: 2bfc48e053636d747f6ae51a9945a83b56eeed2b
       TRANSPORT_REPO: marketdirectory/marketdirectory-staging
       TRANSPORT_BRANCH: e11b2-live-dist-transport
-      REQUIRED_SOURCE_SHA: 77ab1774e42acb2871cc56e67b5da397d72c783c
+      REQUIRED_SOURCE_SHA: 37d7fe8aa5c1eb96ae1957dfd931adf37caf84c0
       EXPECTED_BUNDLE: assets/index-BDt0PV_T.js
       EXPECTED_CSS: assets/index-D66afFJ5.css
     steps:
@@ -79,8 +79,12 @@ jobs:
           test -f "transport/${EXPECTED_CSS}"
           test -f transport/index.html
           test -f transport/.htaccess
+          test -f transport/sitemap-markets.xml
           grep -Fq "${EXPECTED_BUNDLE}" transport/index.html
           grep -Fq "${EXPECTED_CSS}" transport/index.html
+          ! grep -Fq '/market/test-marklet-123<' transport/sitemap-markets.xml
+          ! grep -Fq '/market/riverside-farmers-market<' transport/sitemap-markets.xml
+          grep -Fq '/market/riverside-market<' transport/sitemap-markets.xml
 
       - name: Sync verified dist into live repository
         shell: bash
@@ -107,8 +111,12 @@ jobs:
           test -f "${EXPECTED_CSS}"
           test -f index.html
           test -f .htaccess
+          test -f sitemap-markets.xml
           grep -Fq "${EXPECTED_BUNDLE}" index.html
           grep -Fq "${EXPECTED_CSS}" index.html
+          ! grep -Fq '/market/test-marklet-123<' sitemap-markets.xml
+          ! grep -Fq '/market/riverside-farmers-market<' sitemap-markets.xml
+          grep -Fq '/market/riverside-market<' sitemap-markets.xml
 
       - name: Commit live release
         shell: bash
