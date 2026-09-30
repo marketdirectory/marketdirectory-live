@@ -1,8 +1,9 @@
 {
   "phase": "E11B.2",
   "task": "apply-verified-transport",
-  "source_sha": "77ab1774e42acb2871cc56e67b5da397d72c783c",
-  "transport_commit": "43f1285edf3a69ba7e29a8b6d584a4ed0fba5f86",
-  "rollback_sha": "51067911b1073eb0a162281f2a052375c29502ad",
+  "attempt": 2,
+  "source_sha": "37d7fe8aa5c1eb96ae1957dfd931adf37caf84c0",
+  "transport_commit": "4a252a15205198e52092a347f7308e91ed2ae160",
+  "rollback_sha": "2bfc48e053636d747f6ae51a9945a83b56eeed2b",
   "expected_bundle": "assets/index-BDt0PV_T.js"
 }
