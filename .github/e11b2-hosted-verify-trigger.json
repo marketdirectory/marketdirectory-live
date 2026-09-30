@@ -1,0 +1,7 @@
+{
+  "phase": "E11B.2",
+  "task": "hosted-bundle-parity",
+  "source_sha": "37d7fe8aa5c1eb96ae1957dfd931adf37caf84c0",
+  "live_release_sha": "90f4b49f1df420b7fe97e8d155118329b0042c54",
+  "expected_bundle": "assets/index-BDt0PV_T.js"
+}
