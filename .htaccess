@@ -1,9 +1,33 @@
-RewriteEngine On
+<IfModule mod_mime.c>
+  AddType application/javascript .js .mjs
+  AddType text/css .css
+</IfModule>
 
-# Keep existing files/directories accessible directly
-RewriteCond %{REQUEST_FILENAME} -f [OR]
-RewriteCond %{REQUEST_FILENAME} -d
-RewriteRule ^ - [L]
+<IfModule mod_headers.c>
+  <FilesMatch "^index\.html$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+    Header set Pragma "no-cache"
+    Header set Expires "0"
+  </FilesMatch>
 
-# SPA fallback for clean React Router URLs (e.g. /admin)
-RewriteRule ^ index.html [L]
+  <FilesMatch "\.(?:js|mjs|css|png|jpg|jpeg|gif|webp|svg|ico|woff|woff2)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+</IfModule>
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  RewriteRule ^index\.html$ - [L]
+
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # Missing hashed assets must return 404. Returning index.html here makes
+  # browsers treat HTML as JavaScript/CSS and can white-screen open tabs.
+  RewriteRule ^assets/ - [L]
+
+  RewriteRule . /index.html [L]
+</IfModule>
