@@ -1,8 +1,8 @@
 {
   "sourceRepository": "marketdirectory/marketdirectory",
-  "sourceSha": "37d7fe8aa5c1eb96ae1957dfd931adf37caf84c0",
-  "distBundle": "assets/index-BDt0PV_T.js",
+  "sourceSha": "69c46075b778074992ca22747744bec3670ea6d9",
+  "distBundle": "assets/index-qa0RO2an.js",
   "distCss": "assets/index-D66afFJ5.css",
-  "transportOnly": true,
-  "builtAt": "2026-09-30T00:27:25Z"
+  "deployedAt": "2026-10-02T22:26:01Z",
+  "releaseScope": "winsford-frontend-fix"
 }
