@@ -1,0 +1,270 @@
+name: Deploy Winsford Frontend Fix
+
+on:
+  push:
+    branches:
+      - ops/winsford-frontend-fix-20261002
+    paths:
+      - .github/workflows/deploy-winsford-frontend-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  deploy-and-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BASE_MAIN_SHA: 1b4d0a307133665e9ce5e2ebcb7501375d4adc1e
+      RELEASE_SHA: 69c46075b778074992ca22747744bec3670ea6d9
+      OLD_BUNDLE: assets/index-BDt0PV_T.js
+      NEW_BUNDLE: assets/index-qa0RO2an.js
+      CSS_BUNDLE: assets/index-D66afFJ5.css
+      OLD_SHA256: d9ec10d9fc7e8dc08aa3955eb836008af9182ff043961d17d54471d95c9e7026
+      NEW_SHA256: 070c0baeb5edc9c9fc86328f2a2eb7c4fd68e935fc557760afcbe1d6e7da5e03
+      PATCH_SHA256: b5c3e22cae5aa7b6ac5b7a93823cd517ab0d1b5318101ee180d7a78778648ff7
+      PUBLIC_SITE_URL: https://marketdirectory.co.uk
+    steps:
+      - name: Checkout deployment transport branch
+        uses: actions/checkout@v4
+        with:
+          ref: ops/winsford-frontend-fix-20261002
+          fetch-depth: 0
+
+      - name: Decode and verify validated bundle delta
+        run: |
+          set -euo pipefail
+          base64 -d .release/winsford-frontend-fix/winsford.patch.b64 > /tmp/winsford.patch
+          echo "${PATCH_SHA256}  /tmp/winsford.patch" | sha256sum -c -
+          test "$(wc -c </tmp/winsford.patch)" = "29802"
+
+      - name: Checkout production main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: live-main
+          fetch-depth: 0
+
+      - name: Reconstruct exact validated production bundle
+        run: |
+          set -euo pipefail
+          test "$(git -C live-main rev-parse HEAD)" = "${BASE_MAIN_SHA}"
+          test -f "live-main/${OLD_BUNDLE}"
+          echo "${OLD_SHA256}  live-main/${OLD_BUNDLE}" | sha256sum -c -
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bsdiff
+          bspatch "live-main/${OLD_BUNDLE}" "live-main/${NEW_BUNDLE}" /tmp/winsford.patch
+          echo "${NEW_SHA256}  live-main/${NEW_BUNDLE}" | sha256sum -c -
+          grep -q 'Closed today' "live-main/${NEW_BUNDLE}"
+          grep -q 'Typical hours' "live-main/${NEW_BUNDLE}"
+          grep -q 'Cancelled today' "live-main/${NEW_BUNDLE}"
+          grep -q 'Schedule not confirmed' "live-main/${NEW_BUNDLE}"
+
+      - name: Prepare minimal live repository change
+        run: |
+          set -euo pipefail
+          grep -q "${OLD_BUNDLE}" live-main/index.html
+          sed -i "s#${OLD_BUNDLE}#${NEW_BUNDLE}#g" live-main/index.html
+          test "$(grep -o "${NEW_BUNDLE}" live-main/index.html | wc -l)" = "1"
+          test -f "live-main/${CSS_BUNDLE}"
+          cat > live-main/deploy-info.json <<EOF
+          {
+            "sourceRepository": "marketdirectory/marketdirectory",
+            "sourceSha": "${RELEASE_SHA}",
+            "distBundle": "${NEW_BUNDLE}",
+            "distCss": "${CSS_BUNDLE}",
+            "deployedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "releaseScope": "winsford-frontend-fix"
+          }
+          EOF
+          changed="$(git -C live-main status --short | sed 's/^...//' | sort)"
+          expected="$(printf '%s\n' "${NEW_BUNDLE}" deploy-info.json index.html | sort)"
+          echo "Changed live files:"
+          printf '%s\n' "$changed"
+          test "$changed" = "$expected"
+
+      - name: Commit exact production deployment
+        working-directory: live-main
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html deploy-info.json "${NEW_BUNDLE}"
+          git commit -m "deploy(live): Winsford frontend fix ${RELEASE_SHA::7}"
+          git push origin HEAD:main
+          git fetch origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          echo "LIVE_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Verify actual hosted production bundle
+        run: |
+          set -euo pipefail
+          verified=0
+          for attempt in $(seq 1 12); do
+            bust="winsford_fix=${RELEASE_SHA}-${attempt}-$(date +%s)"
+            index_file="$(mktemp)"
+            index_status="$(curl -L -sS --connect-timeout 10 --max-time 25 -o "$index_file" -w '%{http_code}' "${PUBLIC_SITE_URL}/?${bust}")"
+            hosted_bundle="$(grep -o 'assets/[^\"]*\.js' "$index_file" | head -n1 || true)"
+            echo "Attempt ${attempt}: HTTP ${index_status}; hosted=${hosted_bundle:-none}; expected=${NEW_BUNDLE}"
+            if [ "$index_status" = "200" ] && [ "$hosted_bundle" = "$NEW_BUNDLE" ]; then
+              headers="$(mktemp)"
+              curl -L -fsS -D "$headers" "${PUBLIC_SITE_URL}/${NEW_BUNDLE}?${bust}" -o /tmp/hosted.js
+              ! grep -qi '^content-type: text/html' "$headers"
+              echo "${NEW_SHA256}  /tmp/hosted.js" | sha256sum -c -
+              grep -q 'Closed today' /tmp/hosted.js
+              grep -q 'Typical hours' /tmp/hosted.js
+              grep -q 'Cancelled today' /tmp/hosted.js
+              grep -q 'Schedule not confirmed' /tmp/hosted.js
+              curl -L -fsS "${PUBLIC_SITE_URL}/deploy-info.json?${bust}" -o /tmp/deploy-info.json
+              grep -q "${RELEASE_SHA}" /tmp/deploy-info.json
+              verified=1
+              break
+            fi
+            sleep 6
+          done
+          test "$verified" = "1"
+          echo "HOSTED_BUNDLE=${NEW_BUNDLE}" >> "$GITHUB_ENV"
+
+      - name: Install rendered QA browser
+        run: |
+          mkdir -p /tmp/winsford-qa
+          cd /tmp/winsford-qa
+          npm init -y >/dev/null 2>&1
+          npm install --silent @playwright/test@1.58.2
+          npx playwright install --with-deps chromium
+
+      - name: Rendered Winsford production QA
+        run: |
+          cat > /tmp/winsford-qa/qa.mjs <<'NODE'
+          import { chromium } from '@playwright/test';
+
+          const BASE = 'https://marketdirectory.co.uk';
+          const browser = await chromium.launch({ headless: true });
+          const results = {};
+
+          async function visibleExactTextCount(page, text) {
+            const locator = page.getByText(text, { exact: true });
+            const count = await locator.count();
+            let visible = 0;
+            for (let i = 0; i < count; i += 1) {
+              if (await locator.nth(i).isVisible().catch(() => false)) visible += 1;
+            }
+            return visible;
+          }
+
+          async function assertOneWinsford(page, label) {
+            await page.waitForFunction(() => document.body.innerText.includes('Winsford Market'), null, { timeout: 30000 });
+            const visible = await visibleExactTextCount(page, 'Winsford Market');
+            if (visible !== 1) throw new Error(`${label}: expected exactly one visible Winsford Market listing, got ${visible}`);
+            return visible;
+          }
+
+          // 1. Fresh browser context, direct directory query.
+          {
+            const context = await browser.newContext({ timezoneId: 'Europe/London' });
+            const page = await context.newPage();
+            await page.goto(`${BASE}/directory?query=Winsford&qa=${Date.now()}`, { waitUntil: 'domcontentloaded' });
+            results.freshSession = await assertOneWinsford(page, 'freshSession');
+            await context.close();
+          }
+
+          // 2. Already-open directory session, then Update results.
+          {
+            const context = await browser.newContext({ timezoneId: 'Europe/London' });
+            const page = await context.newPage();
+            await page.goto(`${BASE}/directory?qa=${Date.now()}`, { waitUntil: 'domcontentloaded' });
+            const search = page.locator('input[placeholder="Search markets, towns, or market types..."]').first();
+            await search.waitFor({ state: 'visible', timeout: 30000 });
+            await search.fill('Winsford');
+            const update = page.getByRole('button', { name: /Update results/i }).first();
+            await update.waitFor({ state: 'visible', timeout: 10000 });
+            await update.click();
+            results.alreadyOpenAfterUpdate = await assertOneWinsford(page, 'alreadyOpenAfterUpdate');
+            await context.close();
+          }
+
+          // 3. Detail page -> Directory in the same context, then search.
+          {
+            const context = await browser.newContext({ timezoneId: 'Europe/London' });
+            const page = await context.newPage();
+            await page.goto(`${BASE}/market/winsford-market?qa=${Date.now()}`, { waitUntil: 'domcontentloaded' });
+            await page.waitForFunction(() => document.body.innerText.includes('Winsford Market'), null, { timeout: 30000 });
+            const links = page.locator('a[href="/directory"]');
+            const count = await links.count();
+            let clicked = false;
+            for (let i = 0; i < count; i += 1) {
+              if (await links.nth(i).isVisible().catch(() => false)) {
+                await links.nth(i).click();
+                clicked = true;
+                break;
+              }
+            }
+            if (!clicked) throw new Error('detailToDirectory: no visible Directory link');
+            await page.waitForURL(/\/directory/);
+            const search = page.locator('input[placeholder="Search markets, towns, or market types..."]').first();
+            await search.waitFor({ state: 'visible', timeout: 30000 });
+            await search.fill('Winsford');
+            const update = page.getByRole('button', { name: /Update results/i }).first();
+            await update.click();
+            results.detailToDirectory = await assertOneWinsford(page, 'detailToDirectory');
+            await context.close();
+          }
+
+          async function datedDetail(iso) {
+            const context = await browser.newContext({ timezoneId: 'Europe/London' });
+            const fixedNow = Date.parse(iso);
+            await context.addInitScript(({ fixedNow }) => {
+              const RealDate = Date;
+              class FixedDate extends RealDate {
+                constructor(...args) {
+                  if (args.length === 0) super(fixedNow);
+                  else super(...args);
+                }
+                static now() { return fixedNow; }
+              }
+              globalThis.Date = FixedDate;
+            }, { fixedNow });
+            const page = await context.newPage();
+            await page.goto(`${BASE}/market/winsford-market?date_qa=${fixedNow}`, { waitUntil: 'domcontentloaded' });
+            await page.waitForFunction(() => document.body.innerText.includes('Winsford Market'), null, { timeout: 30000 });
+            return { context, page };
+          }
+
+          // Friday is closed; general hours stay separately labelled.
+          {
+            const { context, page } = await datedDetail('2026-10-02T12:00:00+01:00');
+            const body = await page.locator('body').innerText();
+            if (!body.includes('Closed today')) throw new Error('Friday: Closed today missing');
+            if (!body.includes('Typical hours')) throw new Error('Friday: Typical hours label missing');
+            if (!body.includes('09:00 - 16:00')) throw new Error('Friday: typical 09:00 - 16:00 missing');
+            results.friday = 'Closed today';
+            await context.close();
+          }
+
+          for (const [label, iso] of Object.entries({
+            monday: '2026-10-05T10:00:00+01:00',
+            thursday: '2026-10-08T10:00:00+01:00',
+            saturday: '2026-10-10T10:00:00+01:00',
+          })) {
+            const { context, page } = await datedDetail(iso);
+            const body = await page.locator('body').innerText();
+            if (!body.includes('09:00 - 16:00')) throw new Error(`${label}: 09:00 - 16:00 missing`);
+            if (body.includes('Closed today')) throw new Error(`${label}: incorrectly says Closed today`);
+            if (!body.includes('Typical hours')) throw new Error(`${label}: Typical hours label missing`);
+            results[label] = '09:00 - 16:00';
+            await context.close();
+          }
+
+          await browser.close();
+          console.log(`WINSFORD_RENDERED_QA=${JSON.stringify(results)}`);
+          NODE
+          cd /tmp/winsford-qa
+          node qa.mjs
+
+      - name: Final checkpoint
+        run: |
+          echo "Production source release: ${RELEASE_SHA}"
+          echo "Live repository commit: ${LIVE_COMMIT}"
+          echo "Hosted bundle: ${HOSTED_BUNDLE}"
+          echo "Detail: ${PUBLIC_SITE_URL}/market/winsford-market"
+          echo "Directory: ${PUBLIC_SITE_URL}/directory?query=Winsford"
