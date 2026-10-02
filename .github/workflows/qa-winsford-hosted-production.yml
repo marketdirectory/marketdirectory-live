@@ -26,25 +26,29 @@ jobs:
 
       - name: Wait for actual hosted production bundle
         run: |
-          set -euo pipefail
+          set -u
           verified=0
           for attempt in $(seq 1 30); do
             bust="winsford_hosted=${RELEASE_SHA}-${attempt}-$(date +%s%N)"
             index="$(mktemp)"
-            status="$(curl -L -sS --connect-timeout 10 --max-time 25 -o "$index" -w '%{http_code}' "${PUBLIC_SITE_URL}/?${bust}")"
+            status="000"
+            curl -L -sS --connect-timeout 10 --max-time 25 -o "$index" -w '%{http_code}' "${PUBLIC_SITE_URL}/?${bust}" >/tmp/status.txt 2>/tmp/curl.err
+            curl_exit=$?
+            if [ "$curl_exit" -eq 0 ]; then status="$(cat /tmp/status.txt)"; fi
             bundle="$(grep -o 'assets/[^\"]*\.js' "$index" | head -n1 || true)"
-            echo "Attempt ${attempt}: HTTP ${status}; bundle=${bundle:-none}"
-            if [ "$status" = "200" ] && [ "$bundle" = "$EXPECTED_BUNDLE" ]; then
-              curl -L -fsS "${PUBLIC_SITE_URL}/${EXPECTED_BUNDLE}?${bust}" -o /tmp/hosted.js
-              echo "${EXPECTED_SHA256}  /tmp/hosted.js" | sha256sum -c -
-              curl -L -fsS "${PUBLIC_SITE_URL}/deploy-info.json?${bust}" -o /tmp/deploy-info.json
-              grep -q "${RELEASE_SHA}" /tmp/deploy-info.json
-              grep -q 'Closed today' /tmp/hosted.js
-              grep -q 'Typical hours' /tmp/hosted.js
-              grep -q 'Cancelled today' /tmp/hosted.js
-              grep -q 'Schedule not confirmed' /tmp/hosted.js
-              verified=1
-              break
+            echo "Attempt ${attempt}: curl_exit=${curl_exit}; HTTP ${status}; bundle=${bundle:-none}"
+            if [ "$curl_exit" -eq 0 ] && [ "$status" = "200" ] && [ "$bundle" = "$EXPECTED_BUNDLE" ]; then
+              if curl -L -fsS --connect-timeout 10 --max-time 25 "${PUBLIC_SITE_URL}/${EXPECTED_BUNDLE}?${bust}" -o /tmp/hosted.js && \
+                 echo "${EXPECTED_SHA256}  /tmp/hosted.js" | sha256sum -c - && \
+                 curl -L -fsS --connect-timeout 10 --max-time 25 "${PUBLIC_SITE_URL}/deploy-info.json?${bust}" -o /tmp/deploy-info.json && \
+                 grep -q "${RELEASE_SHA}" /tmp/deploy-info.json && \
+                 grep -q 'Closed today' /tmp/hosted.js && \
+                 grep -q 'Typical hours' /tmp/hosted.js && \
+                 grep -q 'Cancelled today' /tmp/hosted.js && \
+                 grep -q 'Schedule not confirmed' /tmp/hosted.js; then
+                verified=1
+                break
+              fi
             fi
             sleep 10
           done
