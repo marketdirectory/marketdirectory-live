@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MarketDirectory.co.uk | UK Street & Flea Markets</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      html.dark {
+        color-scheme: dark;
+      }
+
+      html.dark body {
+        background-color: #030712 !important;
+        color: #e5e7eb !important;
+      }
+
+      html.dark .bg-white {
+        background-color: #111827 !important;
+      }
+      html.dark .bg-gray-50 {
+        background-color: #030712 !important;
+      }
+      html.dark .bg-gray-100 {
+        background-color: #111827 !important;
+      }
+      html.dark .border-gray-100,
+      html.dark .border-gray-200,
+      html.dark .border-gray-300 {
+        border-color: #374151 !important;
+      }
+      html.dark .text-gray-900 {
+        color: #f9fafb !important;
+      }
+      html.dark .text-gray-800,
+      html.dark .text-gray-700 {
+        color: #e5e7eb !important;
+      }
+      html.dark .text-gray-600,
+      html.dark .text-gray-500 {
+        color: #9ca3af !important;
+      }
+
+      /* Hide scrollbar for Chrome, Safari and Opera */
+      .no-scrollbar::-webkit-scrollbar {
+          display: none;
+      }
+      /* Hide scrollbar for IE, Edge and Firefox */
+      .no-scrollbar {
+          -ms-overflow-style: none;  /* IE and Edge */
+          scrollbar-width: none;  /* Firefox */
+      }
+
+      /* Admin Users & Roles: keep navigation compact and prioritise the review workspace. */
+      @media (min-width: 1280px) {
+        div[class*="xl:grid-cols-[minmax(0,0.9fr)_minmax(520px,1.1fr)]"] {
+          grid-template-columns: minmax(300px, 3fr) minmax(0, 7fr) !important;
+        }
+      }
+    </style>
+    <script>
+      (function () {
+        try {
+          var key = "md_theme";
+          var stored = localStorage.getItem(key);
+          var dark = stored ? stored === "dark" : false;
+          if (dark) {
+            document.documentElement.classList.add("dark");
+            document.documentElement.setAttribute("data-theme", "dark");
+          } else {
+            document.documentElement.classList.remove("dark");
+            document.documentElement.setAttribute("data-theme", "light");
+          }
+        } catch (_) {}
+      })();
+    </script>
+    <script>
+      (function () {
+        function reframeAdminTraderVisibility() {
+          if (!window.location.pathname.startsWith('/admin')) return;
+          var headings = document.querySelectorAll('h3');
+          headings.forEach(function (heading) {
+            if ((heading.textContent || '').trim() !== 'Public profile & discovery') return;
+            var section = heading.closest('section');
+            if (!section) return;
+
+            heading.textContent = 'Public profile controls';
+            var intro = heading.parentElement && heading.parentElement.querySelector('p');
+            if (intro) intro.textContent = 'Approved traders are added to public discovery automatically. Use these controls only for visibility exceptions and directory overrides.';
+
+            var checkbox = section.querySelector('input[type="checkbox"]');
+            var label = checkbox && checkbox.closest('label');
+            if (label) {
+              var blocks = label.querySelectorAll('span > span');
+              if (blocks[0]) blocks[0].textContent = 'Visible in public directory';
+              if (blocks[1]) blocks[1].textContent = 'Approved traders are visible by default. Turn this off only when you intentionally need to hide this trader from public browsing.';
+            }
+
+            var buttons = section.querySelectorAll('button');
+            buttons.forEach(function (button) {
+              if ((button.textContent || '').trim() === 'Save discovery') button.textContent = 'Save public settings';
+            });
+          });
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+          reframeAdminTraderVisibility();
+          new MutationObserver(reframeAdminTraderVisibility).observe(document.body, { childList: true, subtree: true });
+        });
+      })();
+    </script>
+    <script>
+      (function () {
+        var recoveryKey = "marketdirectory_asset_recovery";
+        var assetPattern = /\/assets\/[^?#]+\.(?:js|mjs|css)(?:[?#].*)?$/i;
+        var errorPattern = /failed to fetch dynamically imported module|loading chunk|chunkloaderror|failed to load module script|expected a javascript-or-wasm module script|mime type/i;
+
+        function assetUrl(value) {
+          if (!value) return "";
+          try {
+            return new URL(value, window.location.href).href;
+          } catch (_) {
+            return "";
+          }
+        }
+
+        function isAsset(value) {
+          var url = assetUrl(value);
+          return url ? assetPattern.test(new URL(url).pathname) : false;
+        }
+
+        function recover(reason, url) {
+          var failedUrl = assetUrl(url) || reason || "unknown";
+          var now = Date.now();
+          var previous = null;
+
+          try {
+            previous = JSON.parse(sessionStorage.getItem(recoveryKey) || "null");
+          } catch (_) {
+            previous = null;
+          }
+
+          if (previous && previous.url === failedUrl && now - Number(previous.at || 0) < 5 * 60 * 1000) {
+            return;
+          }
+
+          try {
+            sessionStorage.setItem(recoveryKey, JSON.stringify({ at: now, reason: reason, url: failedUrl }));
+          } catch (_) {}
+
+          var next = new URL(window.location.href);
+          next.searchParams.set("md_asset_reload", String(now));
+          window.location.replace(next.toString());
+        }
+
+        window.addEventListener("error", function (event) {
+          var target = event && event.target;
+          if (target && target !== window) {
+            var tagName = String(target.tagName || "").toUpperCase();
+            var url = tagName === "SCRIPT" ? target.src : tagName === "LINK" ? target.href : "";
+            if (isAsset(url)) {
+              recover("asset-load-error", url);
+              return;
+            }
+          }
+
+          var message = String((event && event.message) || "");
+          if (errorPattern.test(message)) {
+            recover("module-runtime-error", window.location.href);
+          }
+        }, true);
+
+        window.addEventListener("unhandledrejection", function (event) {
+          var reason = event && event.reason;
+          var message = String((reason && (reason.message || reason.toString())) || reason || "");
+          if (errorPattern.test(message)) {
+            recover("module-promise-error", window.location.href);
+          }
+        });
+      })();
+    </script>
+
+  <script type="importmap">
+{
+  "imports": {
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react-router-dom": "https://esm.sh/react-router-dom@^7.12.0",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
+    "@google/genai": "https://esm.sh/@google/genai@^1.38.0",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
+    "@googlemaps/js-api-loader": "https://esm.sh/@googlemaps/js-api-loader@1.16.2"
+  }
+}
+</script>
+  <script type="module" crossorigin src="/assets/index-qa0RO2an.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-D66afFJ5.css">
+</head>
+  <body class="bg-white text-slate-800 antialiased selection:bg-accent-500 selection:text-white transition-colors duration-300 dark:bg-gray-950 dark:text-gray-100">
+    <div id="root"></div>
+    <div id="osm-data-attribution" style="box-sizing:border-box;width:100%;padding:7px 16px;background:#0f172a;color:#94a3b8;text-align:center;font:11px/1.4 Inter,system-ui,sans-serif;">
+      Location data for some listings uses © OpenStreetMap contributors under the
+      <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer" style="color:#e2e8f0;text-decoration:underline;text-underline-offset:2px;">Open Database License (ODbL)</a>.
+    </div>
+</body>
+</html>
