@@ -1,0 +1,125 @@
+name: QA Winsford Hosted Production
+
+on:
+  push:
+    branches:
+      - ops/winsford-frontend-fix-20261002
+    paths:
+      - .github/workflows/qa-winsford-hosted-production.yml
+
+permissions:
+  contents: read
+
+jobs:
+  hosted-and-rendered-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RELEASE_SHA: 69c46075b778074992ca22747744bec3670ea6d9
+      EXPECTED_BUNDLE: assets/index-qa0RO2an.js
+      EXPECTED_SHA256: 070c0baeb5edc9c9fc86328f2a2eb7c4fd68e935fc557760afcbe1d6e7da5e03
+      PUBLIC_SITE_URL: https://marketdirectory.co.uk
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ops/winsford-frontend-fix-20261002
+
+      - name: Wait for actual hosted production bundle
+        run: |
+          set -euo pipefail
+          verified=0
+          for attempt in $(seq 1 30); do
+            bust="winsford_hosted=${RELEASE_SHA}-${attempt}-$(date +%s%N)"
+            index="$(mktemp)"
+            status="$(curl -L -sS --connect-timeout 10 --max-time 25 -o "$index" -w '%{http_code}' "${PUBLIC_SITE_URL}/?${bust}")"
+            bundle="$(grep -o 'assets/[^\"]*\.js' "$index" | head -n1 || true)"
+            echo "Attempt ${attempt}: HTTP ${status}; bundle=${bundle:-none}"
+            if [ "$status" = "200" ] && [ "$bundle" = "$EXPECTED_BUNDLE" ]; then
+              curl -L -fsS "${PUBLIC_SITE_URL}/${EXPECTED_BUNDLE}?${bust}" -o /tmp/hosted.js
+              echo "${EXPECTED_SHA256}  /tmp/hosted.js" | sha256sum -c -
+              curl -L -fsS "${PUBLIC_SITE_URL}/deploy-info.json?${bust}" -o /tmp/deploy-info.json
+              grep -q "${RELEASE_SHA}" /tmp/deploy-info.json
+              grep -q 'Closed today' /tmp/hosted.js
+              grep -q 'Typical hours' /tmp/hosted.js
+              grep -q 'Cancelled today' /tmp/hosted.js
+              grep -q 'Schedule not confirmed' /tmp/hosted.js
+              verified=1
+              break
+            fi
+            sleep 10
+          done
+          test "$verified" = "1"
+
+      - name: Install Chromium
+        run: |
+          mkdir -p /tmp/wqa && cd /tmp/wqa
+          npm init -y >/dev/null 2>&1
+          npm install --silent @playwright/test@1.58.2
+          npx playwright install --with-deps chromium
+
+      - name: Rendered production QA
+        run: |
+          cat > /tmp/wqa/qa.mjs <<'NODE'
+          import { chromium } from '@playwright/test';
+          const BASE = 'https://marketdirectory.co.uk';
+          const browser = await chromium.launch({ headless: true });
+          const result = {};
+
+          async function visibleWinsford(page) {
+            await page.waitForFunction(() => document.body.innerText.includes('Winsford Market'), null, {timeout:30000});
+            const cards = page.getByText('Winsford Market', { exact: true });
+            let visible = 0;
+            for (let i=0;i<await cards.count();i++) if (await cards.nth(i).isVisible().catch(()=>false)) visible++;
+            if (visible !== 1) throw new Error(`Expected exactly one visible Winsford Market, got ${visible}`);
+            return visible;
+          }
+
+          {
+            const c=await browser.newContext({timezoneId:'Europe/London'}); const p=await c.newPage();
+            await p.goto(`${BASE}/directory?query=Winsford&qa=${Date.now()}`,{waitUntil:'domcontentloaded'});
+            result.fresh=await visibleWinsford(p); await c.close();
+          }
+          {
+            const c=await browser.newContext({timezoneId:'Europe/London'}); const p=await c.newPage();
+            await p.goto(`${BASE}/directory?qa=${Date.now()}`,{waitUntil:'domcontentloaded'});
+            const input=p.locator('input[placeholder="Search markets, towns, or market types..."]').first();
+            await input.waitFor({state:'visible',timeout:30000}); await input.fill('Winsford');
+            const button=p.getByRole('button',{name:/Update results/i}).first(); await button.click();
+            result.alreadyOpen=await visibleWinsford(p); await c.close();
+          }
+          {
+            const c=await browser.newContext({timezoneId:'Europe/London'}); const p=await c.newPage();
+            await p.goto(`${BASE}/market/winsford-market?qa=${Date.now()}`,{waitUntil:'domcontentloaded'});
+            await p.waitForFunction(()=>document.body.innerText.includes('Winsford Market'),null,{timeout:30000});
+            const links=p.locator('a[href="/directory"]'); let clicked=false;
+            for(let i=0;i<await links.count();i++){if(await links.nth(i).isVisible().catch(()=>false)){await links.nth(i).click();clicked=true;break;}}
+            if(!clicked) throw new Error('No visible detail-to-directory link');
+            await p.waitForURL(/\/directory/);
+            const input=p.locator('input[placeholder="Search markets, towns, or market types..."]').first(); await input.fill('Winsford');
+            await p.getByRole('button',{name:/Update results/i}).first().click();
+            result.detailToDirectory=await visibleWinsford(p); await c.close();
+          }
+
+          async function pageAt(iso){
+            const c=await browser.newContext({timezoneId:'Europe/London'}); const ms=Date.parse(iso);
+            await c.addInitScript(({ms})=>{const RD=Date; class FD extends RD{constructor(...a){a.length?super(...a):super(ms)} static now(){return ms}} globalThis.Date=FD;},{ms});
+            const p=await c.newPage(); await p.goto(`${BASE}/market/winsford-market?dateqa=${ms}`,{waitUntil:'domcontentloaded'});
+            await p.waitForFunction(()=>document.body.innerText.includes('Winsford Market'),null,{timeout:30000}); return {c,p};
+          }
+          {
+            const {c,p}=await pageAt('2026-10-02T12:00:00+01:00'); const t=await p.locator('body').innerText();
+            if(!t.includes('Closed today')) throw new Error('Friday missing Closed today');
+            if(!t.includes('Typical hours')) throw new Error('Friday missing Typical hours');
+            if(!t.includes('09:00 - 16:00')) throw new Error('Friday missing typical hours value');
+            result.friday='Closed today'; await c.close();
+          }
+          for(const [name,iso] of Object.entries({monday:'2026-10-05T10:00:00+01:00',thursday:'2026-10-08T10:00:00+01:00',saturday:'2026-10-10T10:00:00+01:00'})){
+            const {c,p}=await pageAt(iso); const t=await p.locator('body').innerText();
+            if(!t.includes('09:00 - 16:00')) throw new Error(`${name} missing hours`);
+            if(t.includes('Closed today')) throw new Error(`${name} wrongly closed`);
+            if(!t.includes('Typical hours')) throw new Error(`${name} missing Typical hours label`);
+            result[name]='09:00 - 16:00'; await c.close();
+          }
+          await browser.close(); console.log('WINSFORD_QA='+JSON.stringify(result));
+          NODE
+          cd /tmp/wqa && node qa.mjs
