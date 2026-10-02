@@ -1,0 +1,67 @@
+name: Build Winsford Release Ready Commit
+
+on:
+  push:
+    branches:
+      - ops/winsford-frontend-fix-20261003
+    paths:
+      - .github/workflows/build-winsford-release-ready.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ops/winsford-frontend-fix-20261003
+          fetch-depth: 0
+
+      - name: Verify and reconstruct exact bundle
+        run: |
+          set -euo pipefail
+          base64 -d .release/winsford-frontend-fix/winsford.patch.b64 > /tmp/winsford.patch
+          test "$(wc -c </tmp/winsford.patch)" = "29802"
+          test "$(sha256sum /tmp/winsford.patch | awk '{print $1}')" = "b5c3e22cae5aa7b6ac5b7a93823cd517ab0d1b5318101ee180d7a78778648ff7"
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "1b4d0a307133665e9ce5e2ebcb7501375d4adc1e"
+          git worktree add /tmp/release-ready origin/main
+          git -C /tmp/release-ready switch -C release/winsford-live-ready origin/main
+          test "$(sha256sum /tmp/release-ready/assets/index-BDt0PV_T.js | awk '{print $1}')" = "d9ec10d9fc7e8dc08aa3955eb836008af9182ff043961d17d54471d95c9e7026"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bsdiff
+          bspatch /tmp/release-ready/assets/index-BDt0PV_T.js /tmp/release-ready/assets/index-qa0RO2an.js /tmp/winsford.patch
+          test "$(sha256sum /tmp/release-ready/assets/index-qa0RO2an.js | awk '{print $1}')" = "070c0baeb5edc9c9fc86328f2a2eb7c4fd68e935fc557760afcbe1d6e7da5e03"
+          cp .release/winsford-frontend-fix/index.html /tmp/release-ready/index.html
+          cat > /tmp/release-ready/deploy-info.json <<'EOF'
+          {
+            "sourceRepository": "marketdirectory/marketdirectory",
+            "sourceSha": "69c46075b778074992ca22747744bec3670ea6d9",
+            "validatedPatchSha": "5e62e3b2d3d4c18a7bcb5548db08a051538761dc",
+            "distBundle": "assets/index-qa0RO2an.js",
+            "distCss": "assets/index-D66afFJ5.css",
+            "releaseScope": "Winsford directory refresh and public hours presentation only"
+          }
+          EOF
+
+      - name: Verify clean release diff
+        run: |
+          set -euo pipefail
+          cd /tmp/release-ready
+          changed="$(git status --short | awk '{print $2}' | sort)"
+          expected="$(printf '%s\n' assets/index-qa0RO2an.js deploy-info.json index.html | sort)"
+          test "$changed" = "$expected"
+          grep -q '/assets/index-qa0RO2an.js' index.html
+
+      - name: Commit release-ready branch
+        run: |
+          set -euo pipefail
+          cd /tmp/release-ready
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add assets/index-qa0RO2an.js index.html deploy-info.json
+          git commit -m "deploy(live): prepare Winsford frontend fix from 69c4607"
+          git push -f origin HEAD:release/winsford-live-ready
