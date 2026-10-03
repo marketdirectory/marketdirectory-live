@@ -1,9 +1,0 @@
-{
-  "phase": "E11B.2",
-  "task": "apply-verified-transport",
-  "attempt": 2,
-  "source_sha": "37d7fe8aa5c1eb96ae1957dfd931adf37caf84c0",
-  "transport_commit": "4a252a15205198e52092a347f7308e91ed2ae160",
-  "rollback_sha": "2bfc48e053636d747f6ae51a9945a83b56eeed2b",
-  "expected_bundle": "assets/index-BDt0PV_T.js"
-}
