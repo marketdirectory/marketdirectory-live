@@ -4,6 +4,16 @@
 </IfModule>
 
 <IfModule mod_headers.c>
+  # Additive staged hardening; do not alter existing production CSP.
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set X-Frame-Options "SAMEORIGIN"
+  Header always set Permissions-Policy "camera=(), microphone=(), geolocation=(self)"
+
+  <FilesMatch "^(?:deploy-info|asset-retention)\.json$">
+    Header always set Cache-Control "no-store, max-age=0"
+  </FilesMatch>
+
   <FilesMatch "^index\.html$">
     Header set Cache-Control "no-cache, no-store, must-revalidate"
     Header set Pragma "no-cache"
@@ -15,9 +25,19 @@
   </FilesMatch>
 </IfModule>
 
+# Defense for inadvertently copied private configuration files.
+<FilesMatch "^(?:\.env(?:\..*)?|\.git(?:ignore|modules|attributes)?|\.npmrc|\.htaccess|\.htpasswd|.*\.(?:pem|key|p12|pfx))$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+</FilesMatch>
+
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
+
+  RewriteRule "(^|/)\.(?:git(?:/|$)|env(?:\.[^/]+)?$|npmrc$|htaccess$|htpasswd$)" - [F,L,NC]
+  RewriteRule "\.(?:pem|key|p12|pfx)$" - [F,L,NC]
 
   RewriteRule ^index\.html$ - [L]
 
